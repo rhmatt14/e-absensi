@@ -34,43 +34,22 @@ export default function AbsensiPage() {
         }
 
         if (attData.success) {
-          // Group attendance records by user and date
           const rawRecords = attData.data;
           
-          const grouped: Record<string, any> = {};
-          
-          rawRecords.forEach((record: any) => {
-            const recordDate = new Date(record.timestamp);
-            const dateStr = recordDate.toDateString();
-            const key = `${dateStr}_${record.employeeName}`;
-            
-            if (!grouped[key]) {
-              grouped[key] = {
-                date: recordDate,
-                employeeName: record.employeeName,
-                checkIn: null,
-                checkOut: null,
-                photo: null,
-                location: null
-              };
-            }
-            
-            if (record.type === "masuk") {
-              if (!grouped[key].checkIn || recordDate < grouped[key].checkIn) {
-                grouped[key].checkIn = recordDate;
-                grouped[key].photo = record.photo;
-                grouped[key].location = record.location;
-              }
-            } else if (record.type === "keluar") {
-              if (!grouped[key].checkOut || recordDate > grouped[key].checkOut) {
-                grouped[key].checkOut = recordDate;
-                if (!grouped[key].photo) grouped[key].photo = record.photo;
-                if (!grouped[key].location) grouped[key].location = record.location;
-              }
-            }
-          });
+          // Data is already one document per user per day in the new schema
+          const processedRecords = rawRecords.map((record: any) => ({
+            date: new Date(record.date),
+            employeeName: record.employeeName,
+            checkIn: record.waktuMasuk ? new Date(record.waktuMasuk) : null,
+            checkOut: record.waktuKeluar ? new Date(record.waktuKeluar) : null,
+            photoMasuk: record.fotoMasuk,
+            photoKeluar: record.fotoKeluar,
+            locationMasuk: record.lokasiMasuk,
+            locationKeluar: record.lokasiKeluar
+          }));
 
-          const processedRecords = Object.values(grouped).sort((a: any, b: any) => b.date.getTime() - a.date.getTime());
+          // Sort descending by date
+          processedRecords.sort((a: any, b: any) => b.date.getTime() - a.date.getTime());
           
           setRecords(processedRecords);
           setFilteredRecords(processedRecords);
@@ -186,7 +165,7 @@ export default function AbsensiPage() {
             <tbody className="divide-y divide-gray-200">
               {loading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
                     <div className="flex justify-center items-center">
                       <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
                       <span className="ml-2">Memuat data absensi...</span>
@@ -233,7 +212,7 @@ export default function AbsensiPage() {
                 })
               ) : (
                 <tr>
-                  <td colSpan={5} className="px-6 py-8 text-center text-gray-500">
+                  <td colSpan={6} className="px-6 py-8 text-center text-gray-500">
                     Tidak ada data absensi ditemukan untuk rentang tanggal tersebut.
                   </td>
                 </tr>
@@ -245,10 +224,10 @@ export default function AbsensiPage() {
 
       {/* VERIFICATION MODAL OVERLAY */}
       {isModalOpen && selectedRecord && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm transition-opacity">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm transition-opacity overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl overflow-hidden animate-in fade-in zoom-in-95 duration-200 my-8">
             {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50">
+            <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-gray-50/50 sticky top-0 z-10">
               <h3 className="text-lg font-semibold text-gray-900">
                 Detail Bukti Kehadiran - {selectedRecord.employeeName}
               </h3>
@@ -264,66 +243,117 @@ export default function AbsensiPage() {
 
             {/* Modal Content */}
             <div className="p-6">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                {/* Left Box: Photo */}
-                <div className="flex flex-col">
-                  <p className="text-sm font-medium text-gray-700 mb-2">Foto Verifikasi</p>
-                  <div className="w-full aspect-[3/4] bg-gray-100 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 overflow-hidden relative">
-                    {selectedRecord.photo ? (
-                      <img src={selectedRecord.photo} alt="Bukti Kehadiran" className="w-full h-full object-cover" />
-                    ) : (
-                      <>
-                        <svg className="w-10 h-10 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        <span className="text-sm">Tidak ada foto</span>
-                      </>
-                    )}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                
+                {/* SECTION: CHECK IN */}
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-teal-700 flex items-center gap-2 border-b pb-2">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
+                    </svg>
+                    Data Check In ({selectedRecord.checkIn ? selectedRecord.checkIn.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Belum"})
+                  </h4>
+                  
+                  {/* Left Box: Photo Masuk */}
+                  <div className="flex flex-col">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Foto Verifikasi Masuk</p>
+                    <div className="w-full aspect-[4/3] bg-gray-100 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 overflow-hidden relative">
+                      {selectedRecord.photoMasuk ? (
+                        <img src={selectedRecord.photoMasuk} alt="Bukti Masuk" className="w-full h-full object-cover" />
+                      ) : (
+                        <>
+                          <svg className="w-10 h-10 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                          </svg>
+                          <span className="text-sm">Tidak ada foto</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Right Box: Location Masuk */}
+                  <div className="flex flex-col">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Lokasi Check-in</p>
+                    <div className="w-full h-48 bg-gray-200 rounded-xl border border-gray-300 flex flex-col items-center justify-center text-gray-500 mb-4 relative overflow-hidden">
+                      {selectedRecord.locationMasuk?.latitude && selectedRecord.locationMasuk?.longitude ? (
+                        <iframe 
+                          width="100%" 
+                          height="100%" 
+                          style={{ border: 0 }} 
+                          loading="lazy" 
+                          allowFullScreen 
+                          referrerPolicy="no-referrer-when-downgrade" 
+                          src={`https://maps.google.com/maps?q=${selectedRecord.locationMasuk.latitude},${selectedRecord.locationMasuk.longitude}&z=15&output=embed`}
+                        ></iframe>
+                      ) : (
+                        <>
+                          <svg className="w-8 h-8 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          </svg>
+                          <span className="text-sm">Lokasi tidak tersedia</span>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
 
-                {/* Right Box: Location */}
-                <div className="flex flex-col">
-                  <p className="text-sm font-medium text-gray-700 mb-2">Lokasi Check-in</p>
-                  <div className="w-full h-48 bg-gray-200 rounded-xl border border-gray-300 flex flex-col items-center justify-center text-gray-500 mb-4 relative overflow-hidden">
-                    {selectedRecord.location?.latitude && selectedRecord.location?.longitude ? (
-                      <iframe 
-                        width="100%" 
-                        height="100%" 
-                        style={{ border: 0 }} 
-                        loading="lazy" 
-                        allowFullScreen 
-                        referrerPolicy="no-referrer-when-downgrade" 
-                        src={`https://maps.google.com/maps?q=${selectedRecord.location.latitude},${selectedRecord.location.longitude}&z=15&output=embed`}
-                      ></iframe>
-                    ) : (
-                      <>
-                        <svg className="w-8 h-8 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                        </svg>
-                        <span className="text-sm">Lokasi tidak tersedia</span>
-                      </>
-                    )}
-                  </div>
+                {/* SECTION: CHECK OUT */}
+                <div className="space-y-4">
+                  <h4 className="font-semibold text-orange-700 flex items-center gap-2 border-b pb-2">
+                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                    </svg>
+                    Data Check Out ({selectedRecord.checkOut ? selectedRecord.checkOut.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "Belum"})
+                  </h4>
                   
-                  <div className="bg-indigo-50 border border-indigo-100 rounded-lg p-3 mt-auto">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="text-xs text-indigo-500 font-medium">Koordinat</span>
+                  {/* Left Box: Photo Keluar */}
+                  <div className="flex flex-col">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Foto Verifikasi Pulang</p>
+                    <div className="w-full aspect-[4/3] bg-gray-100 rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 overflow-hidden relative">
+                      {selectedRecord.photoKeluar ? (
+                        <img src={selectedRecord.photoKeluar} alt="Bukti Pulang" className="w-full h-full object-cover" />
+                      ) : (
+                        <>
+                          <svg className="w-10 h-10 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                          </svg>
+                          <span className="text-sm">Tidak ada foto</span>
+                        </>
+                      )}
                     </div>
-                    <p className="text-sm text-indigo-900 font-mono">
-                      {selectedRecord.location?.latitude && selectedRecord.location?.longitude 
-                        ? `${selectedRecord.location.latitude}, ${selectedRecord.location.longitude}`
-                        : "Tidak tersedia"}
-                    </p>
+                  </div>
+
+                  {/* Right Box: Location Keluar */}
+                  <div className="flex flex-col">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Lokasi Check-out</p>
+                    <div className="w-full h-48 bg-gray-200 rounded-xl border border-gray-300 flex flex-col items-center justify-center text-gray-500 mb-4 relative overflow-hidden">
+                      {selectedRecord.locationKeluar?.latitude && selectedRecord.locationKeluar?.longitude ? (
+                        <iframe 
+                          width="100%" 
+                          height="100%" 
+                          style={{ border: 0 }} 
+                          loading="lazy" 
+                          allowFullScreen 
+                          referrerPolicy="no-referrer-when-downgrade" 
+                          src={`https://maps.google.com/maps?q=${selectedRecord.locationKeluar.latitude},${selectedRecord.locationKeluar.longitude}&z=15&output=embed`}
+                        ></iframe>
+                      ) : (
+                        <>
+                          <svg className="w-8 h-8 mb-2 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          </svg>
+                          <span className="text-sm">Lokasi tidak tersedia</span>
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
+
               </div>
             </div>
 
             {/* Modal Footer */}
-            <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-end">
+            <div className="px-6 py-4 border-t border-gray-100 bg-gray-50 flex justify-end sticky bottom-0 z-10">
               <button
                 onClick={handleCloseModal}
                 className="px-5 py-2 bg-white border border-gray-300 text-gray-700 hover:bg-gray-50 font-medium rounded-lg transition-colors shadow-sm"

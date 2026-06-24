@@ -199,7 +199,8 @@ export default function ClientPage() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               photo: photoSrc,
-              location: coords,
+              latitude: coords.latitude,
+              longitude: coords.longitude,
               type,
             }),
           });
@@ -229,13 +230,15 @@ export default function ClientPage() {
 
   if (!user) return <div className="min-h-screen flex items-center justify-center">Memuat...</div>;
 
-  const todayStr = new Date().toDateString();
-  const myRecordsToday = records.filter(record => {
-    return record.employeeName === user.name && new Date(record.timestamp).toDateString() === todayStr;
+  const startOfDay = new Date();
+  startOfDay.setHours(0, 0, 0, 0);
+  
+  const myTodayRecord = records.find(record => {
+    return record.employeeName === user.name && new Date(record.date).getTime() === startOfDay.getTime();
   });
   
-  const hasAbsenMasuk = myRecordsToday.some(r => r.type === 'masuk');
-  const hasAbsenKeluar = myRecordsToday.some(r => r.type === 'keluar');
+  const hasAbsenMasuk = !!myTodayRecord?.waktuMasuk;
+  const hasAbsenKeluar = !!myTodayRecord?.waktuKeluar;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 p-4 md:p-8 font-sans text-gray-900">
@@ -367,34 +370,55 @@ export default function ClientPage() {
               ) : (
                 records.map((record) => (
                   <div key={record._id} className="group flex flex-col sm:flex-row gap-5 items-start sm:items-center p-5 bg-white border border-gray-100 rounded-2xl hover:border-purple-200 hover:shadow-md transition-all">
-                    <div className="w-20 h-20 shrink-0 rounded-2xl overflow-hidden bg-gray-100 shadow-inner relative">
-                      <img src={record.photo} alt={record.employeeName} className="w-full h-full object-cover" />
-                      <div className="absolute inset-0 ring-1 ring-inset ring-black/10 rounded-2xl"></div>
+                    <div className="flex gap-2 shrink-0">
+                      <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-100 shadow-inner relative ring-2 ring-teal-100">
+                        {record.fotoMasuk ? (
+                           <img src={record.fotoMasuk} alt="Masuk" className="w-full h-full object-cover" />
+                        ) : (
+                           <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">N/A</div>
+                        )}
+                        <div className="absolute bottom-0 inset-x-0 bg-teal-500/80 text-white text-[10px] text-center font-bold">IN</div>
+                      </div>
+                      <div className="w-16 h-16 rounded-xl overflow-hidden bg-gray-100 shadow-inner relative ring-2 ring-orange-100">
+                         {record.fotoKeluar ? (
+                           <img src={record.fotoKeluar} alt="Keluar" className="w-full h-full object-cover" />
+                        ) : (
+                           <div className="w-full h-full flex items-center justify-center text-xs text-gray-400">N/A</div>
+                        )}
+                        <div className="absolute bottom-0 inset-x-0 bg-orange-500/80 text-white text-[10px] text-center font-bold">OUT</div>
+                      </div>
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <h3 className="font-bold text-lg truncate text-gray-900 group-hover:text-purple-700 transition-colors">{record.employeeName}</h3>
-                        <span className={`px-2 py-0.5 text-xs font-bold rounded-full ${record.type === 'keluar' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
-                          {record.type === 'keluar' ? 'Keluar' : 'Masuk'}
-                        </span>
                       </div>
-                      <p className="text-sm text-gray-500 mt-1 flex items-center gap-1.5">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2-2v12a2 2 0 002 2z" />
-                        </svg>
-                        {new Date(record.timestamp).toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'short' })}
+                      <p className="text-sm font-semibold text-gray-700 mt-1">
+                        {new Date(record.date).toLocaleDateString('id-ID', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
                       </p>
-                      <a 
-                        href={`https://www.google.com/maps?q=${record.location.latitude},${record.location.longitude}`} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="text-sm font-semibold text-blue-600 hover:text-blue-800 mt-3 inline-flex items-center gap-1.5 bg-blue-50 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors"
-                      >
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                          <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
-                        </svg>
-                        Lihat Peta Lokasi
-                      </a>
+                      <div className="flex items-center gap-4 mt-2">
+                         <span className="text-sm text-gray-500">
+                           <strong className="text-teal-600">IN:</strong> {record.waktuMasuk ? new Date(record.waktuMasuk).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                         </span>
+                         <span className="text-sm text-gray-500">
+                           <strong className="text-orange-600">OUT:</strong> {record.waktuKeluar ? new Date(record.waktuKeluar).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                         </span>
+                      </div>
+                      {(record.lokasiMasuk || record.lokasiKeluar) && (
+                        <a 
+                          href={record.lokasiMasuk 
+                            ? `https://www.google.com/maps?q=${record.lokasiMasuk.latitude},${record.lokasiMasuk.longitude}`
+                            : `https://www.google.com/maps?q=${record.lokasiKeluar.latitude},${record.lokasiKeluar.longitude}`
+                          } 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-xs font-semibold text-blue-600 hover:text-blue-800 mt-3 inline-flex items-center gap-1.5 bg-blue-50 px-2 py-1 rounded-md hover:bg-blue-100 transition-colors"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                          </svg>
+                          Peta Lokasi
+                        </a>
+                      )}
                     </div>
                   </div>
                 ))

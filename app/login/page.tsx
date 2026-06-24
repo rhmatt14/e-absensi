@@ -27,7 +27,7 @@ export default function Login() {
         if (data.role === "admin") {
           router.push("/admin");
         } else {
-          router.push("/");
+          router.push("/karyawan");
         }
       } else {
         setError(data.error || "Gagal login");

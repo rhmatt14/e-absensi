@@ -5,56 +5,50 @@ import Setting from '@/models/Setting';
 import { v2 as cloudinary } from 'cloudinary';
 
 // Konfigurasi Cloudinary
-console.log('[API INIT] Membaca konfigurasi Cloudinary...');
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET,
 });
-console.log('[API INIT] Cloud Name yang terbaca:', process.env.CLOUDINARY_CLOUD_NAME);
 
 export async function POST(req: Request) {
-  console.log('\n=============================================');
-  console.log('[API POST] Memulai request POST /api/attendance');
-  
   try {
-    console.log('[API POST] [1/5] Mencoba koneksi ke database MongoDB...');
     await connectToDatabase();
-    console.log('[API POST] [1/5] Berhasil terhubung ke MongoDB!');
-    
-    console.log('[API POST] [2/5] Membaca request body...');
-    const body = await req.json();
-    const { photo, location, type = 'masuk' } = body;
-    const employeeName = req.headers.get('x-user-name');
-    console.log(`[API POST] [2/5] Body terbaca -> Nama (dari token): ${employeeName}, Lokasi: ${JSON.stringify(location)}, Ukuran Foto: ${photo ? photo.length : 0} karakter, Tipe: ${type}`);
 
-    if (!employeeName || !photo || !location || !location.latitude || !location.longitude) {
-      console.error('[API POST] [ERROR] Data tidak lengkap!');
+    const body = await req.json();
+    const { photo, latitude, longitude, type } = body;
+    const employeeName = req.headers.get('x-user-name');
+
+    if (!employeeName || !photo || latitude === undefined || longitude === undefined) {
       return NextResponse.json({ error: 'Data tidak lengkap. Pastikan nama, foto, dan lokasi telah diisi.' }, { status: 400 });
     }
 
-    // Ambil setting enableDailyLimit
+    const startOfDay = new Date();
+    startOfDay.setHours(0, 0, 0, 0);
+
+    // Cari record untuk hari ini
+    let todayRecord = await Attendance.findOne({
+      employeeName,
+      date: startOfDay
+    });
+
     let setting = await Setting.findOne({ key: 'enableDailyLimit' });
     const enableDailyLimit = setting ? setting.value : true;
 
+    // Normalisasi type (pulang dan keluar dianggap sama)
+    const normalizedType = type === 'pulang' ? 'keluar' : type;
+
     if (enableDailyLimit) {
-      // Validasi urutan absen (Masuk lalu Keluar) untuk hari ini
-      console.log('[API POST] [2.5/5] Melakukan validasi urutan absensi...');
-      const startOfDay = new Date();
-      startOfDay.setHours(0, 0, 0, 0);
-
-      const lastRecord = await Attendance.findOne({
-        employeeName,
-        timestamp: { $gte: startOfDay }
-      }).sort({ timestamp: -1 });
-
-      if (type === 'masuk') {
-        if (lastRecord && lastRecord.type === 'masuk') {
-          return NextResponse.json({ error: 'Anda sudah melakukan Absen Masuk hari ini. Silakan Absen Keluar terlebih dahulu.' }, { status: 400 });
+      if (normalizedType === 'masuk') {
+        if (todayRecord && todayRecord.waktuMasuk) {
+          return NextResponse.json({ error: 'Anda sudah melakukan Absen Masuk hari ini. Silakan Absen Pulang.' }, { status: 400 });
         }
-      } else if (type === 'keluar') {
-        if (!lastRecord || lastRecord.type === 'keluar') {
-          return NextResponse.json({ error: 'Anda belum Absen Masuk atau sudah Absen Keluar hari ini.' }, { status: 400 });
+      } else if (normalizedType === 'keluar') {
+        if (!todayRecord || !todayRecord.waktuMasuk) {
+          return NextResponse.json({ error: 'Anda belum Absen Masuk hari ini.' }, { status: 400 });
+        }
+        if (todayRecord.waktuKeluar) {
+          return NextResponse.json({ error: 'Anda sudah Absen Pulang hari ini.' }, { status: 400 });
         }
       }
     }
@@ -62,41 +56,59 @@ export async function POST(req: Request) {
     // Upload base64 image to Cloudinary
     let photoUrl = '';
     try {
-      console.log('[API POST] [3/5] Memulai upload gambar ke Cloudinary...');
       const uploadResponse = await cloudinary.uploader.upload(photo, {
         folder: 'absensi_app',
       });
       photoUrl = uploadResponse.secure_url;
-      console.log('[API POST] [3/5] Upload Cloudinary berhasil! URL:', photoUrl);
     } catch (uploadError: any) {
-      console.error('[API POST] [ERROR 3/5] Gagal upload ke Cloudinary. Detail Error:', uploadError);
-      return NextResponse.json({ error: 'Gagal mengupload foto ke server penyedia gambar', details: uploadError?.message || String(uploadError) }, { status: 500 });
+      return NextResponse.json({ error: 'Gagal mengupload foto', details: uploadError?.message }, { status: 500 });
     }
 
-    // Simpan ke MongoDB dengan URL dari Cloudinary
-    console.log('[API POST] [4/5] Menyimpan data ke MongoDB...');
-    const newAttendance = await Attendance.create({
-      employeeName,
-      photo: photoUrl, // Menyimpan URL, bukan Base64
-      location,
-      type
-    });
-    console.log('[API POST] [4/5] Berhasil menyimpan ke MongoDB! ID:', newAttendance._id);
+    // Simpan ke MongoDB berdasarkan type
+    if (normalizedType === 'masuk') {
+      if (!todayRecord) {
+        // Buat record baru untuk hari ini
+        todayRecord = await Attendance.create({
+          employeeName,
+          date: startOfDay,
+          waktuMasuk: new Date(),
+          fotoMasuk: photoUrl,
+          lokasiMasuk: { latitude, longitude }
+        });
+      } else {
+        // Jika karena alasan tertentu record sudah ada tapi waktuMasuk kosong
+        todayRecord.waktuMasuk = new Date();
+        todayRecord.fotoMasuk = photoUrl;
+        todayRecord.lokasiMasuk = { latitude, longitude };
+        await todayRecord.save();
+      }
+    } else if (normalizedType === 'keluar') {
+      // 1. Pasang satpam di sini! Kalau belum absen masuk, tolak.
+      if (!todayRecord) {
+        return NextResponse.json(
+          { success: false, error: 'Anda belum absen masuk hari ini!' },
+          { status: 400 }
+        );
+      }
 
-    console.log('[API POST] [5/5] Selesai. Mengirim response sukses.');
-    console.log('=============================================\n');
-    return NextResponse.json({ success: true, data: newAttendance }, { status: 201 });
+      // 2. Kalau aman (todayRecord ada), baru update datanya
+      todayRecord.waktuKeluar = new Date();
+      todayRecord.fotoKeluar = photoUrl; // Pastikan nama variabel ini sesuai (photo atau photoUrl)
+      todayRecord.lokasiKeluar = { latitude, longitude };
+      await todayRecord.save();
+    }
+
+    return NextResponse.json({ success: true, data: todayRecord }, { status: 201 });
   } catch (error: any) {
-    console.error('[API POST] [FATAL ERROR] Terjadi kesalahan utama:', error);
-    console.log('=============================================\n');
-    return NextResponse.json({ error: 'Gagal menyimpan data absensi', details: error?.message || String(error) }, { status: 500 });
+    console.error('API Error:', error);
+    return NextResponse.json({ error: 'Gagal menyimpan data absensi', details: error?.message }, { status: 500 });
   }
 }
 
 export async function GET(req: Request) {
   try {
     await connectToDatabase();
-    
+
     const employeeName = req.headers.get('x-user-name');
     const role = req.headers.get('x-user-role');
 
@@ -109,7 +121,8 @@ export async function GET(req: Request) {
       query = { employeeName };
     }
 
-    const records = await Attendance.find(query).sort({ timestamp: -1 });
+    // Sort berdasarkan date descending (terbaru di atas)
+    const records = await Attendance.find(query).sort({ date: -1 });
     return NextResponse.json({ success: true, data: records }, { status: 200 });
   } catch (error) {
     console.error('Error fetching attendance:', error);

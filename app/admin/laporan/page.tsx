@@ -70,36 +70,20 @@ export default function LaporanPage() {
       const end = new Date(endDate);
       end.setHours(23, 59, 59, 999);
 
-      const grouped: Record<string, any> = {};
-      
-      rawRecords.forEach((record: any) => {
-        const recordDate = new Date(record.timestamp);
-        if (recordDate < start || recordDate > end) return;
+      // Data is already one document per user per day in the new schema
+      const processedRecords = rawRecords
+        .filter((record: any) => {
+          const recordDate = new Date(record.date);
+          return recordDate >= start && recordDate <= end;
+        })
+        .map((record: any) => ({
+          date: new Date(record.date),
+          employeeName: record.employeeName,
+          checkIn: record.waktuMasuk ? new Date(record.waktuMasuk) : null,
+          checkOut: record.waktuKeluar ? new Date(record.waktuKeluar) : null
+        }));
 
-        const dateStr = recordDate.toDateString();
-        const key = `${dateStr}_${record.employeeName}`;
-        
-        if (!grouped[key]) {
-          grouped[key] = {
-            date: recordDate,
-            employeeName: record.employeeName,
-            checkIn: null,
-            checkOut: null
-          };
-        }
-        
-        if (record.type === "masuk") {
-          if (!grouped[key].checkIn || recordDate < grouped[key].checkIn) {
-            grouped[key].checkIn = recordDate;
-          }
-        } else if (record.type === "keluar") {
-          if (!grouped[key].checkOut || recordDate > grouped[key].checkOut) {
-            grouped[key].checkOut = recordDate;
-          }
-        }
-      });
-
-      const processedRecords = Object.values(grouped).sort((a: any, b: any) => b.date.getTime() - a.date.getTime());
+      processedRecords.sort((a: any, b: any) => b.date.getTime() - a.date.getTime());
 
       if (processedRecords.length === 0) {
         setMessage({ text: "Tidak ada data absensi untuk rentang tanggal ini.", type: "error" });

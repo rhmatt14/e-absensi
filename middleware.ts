@@ -4,10 +4,17 @@ import { verifyToken } from './lib/auth';
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  
+
   // Rute yang butuh autentikasi
-  const isProtectedPath = pathname === '/' || pathname.startsWith('/admin') || pathname.startsWith('/api/attendance') || pathname.startsWith('/api/admin') || pathname.startsWith('/api/settings');
-  
+  const isProtectedPath =
+    pathname === '/' ||
+    pathname.startsWith('/admin') ||
+    pathname.startsWith('/karyawan') ||
+    pathname.startsWith('/api/attendance') ||
+    pathname.startsWith('/api/admin') ||
+    pathname.startsWith('/api/settings') ||
+    pathname.startsWith('/api/izin');
+
   // Jika tidak protected, biarkan lewat
   if (!isProtectedPath) {
     return NextResponse.next();
@@ -31,9 +38,22 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  // Cek otorisasi khusus halaman admin
+  // ---- Role-based routing untuk halaman root ("/") ----
+  if (pathname === '/') {
+    if (payload.role === 'admin') {
+      return NextResponse.redirect(new URL('/admin', request.url));
+    }
+    return NextResponse.redirect(new URL('/karyawan', request.url));
+  }
+
+  // ---- Proteksi halaman admin: hanya role admin ----
   if (pathname.startsWith('/admin') && payload.role !== 'admin') {
-    return NextResponse.redirect(new URL('/', request.url));
+    return NextResponse.redirect(new URL('/karyawan', request.url));
+  }
+
+  // ---- Proteksi halaman karyawan: hanya role employee ----
+  if (pathname.startsWith('/karyawan') && payload.role !== 'employee') {
+    return NextResponse.redirect(new URL('/admin', request.url));
   }
 
   // Lanjutkan request, dan kita bisa sematkan informasi user di Header
@@ -51,5 +71,5 @@ export async function middleware(request: NextRequest) {
 
 // Konfigurasi path mana saja yang akan dicegat oleh middleware
 export const config = {
-  matcher: ['/', '/admin/:path*', '/api/attendance', '/api/admin/:path*', '/api/settings'],
+  matcher: ['/', '/admin/:path*', '/karyawan/:path*', '/api/attendance', '/api/izin', '/api/admin/:path*', '/api/settings'],
 };
