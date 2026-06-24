@@ -78,8 +78,8 @@ export default function KaryawanDashboardPage() {
     async function fetchData() {
       try {
         const [meRes, attRes] = await Promise.all([
-          fetch("/api/auth/me"),
-          fetch("/api/attendance"),
+          fetch("/api/auth/me", { cache: "no-store" }),
+          fetch("/api/attendance", { cache: "no-store" }),
         ]);
 
         if (meRes.ok) {

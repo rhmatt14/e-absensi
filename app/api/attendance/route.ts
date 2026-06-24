@@ -4,6 +4,8 @@ import Attendance from '@/models/Attendance';
 import Setting from '@/models/Setting';
 import { v2 as cloudinary } from 'cloudinary';
 
+export const dynamic = 'force-dynamic';
+
 // Konfigurasi Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,

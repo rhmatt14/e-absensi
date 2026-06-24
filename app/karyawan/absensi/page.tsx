@@ -145,6 +145,7 @@ function AbsensiCameraContent() {
 
         // Redirect to dashboard after brief delay
         setTimeout(() => {
+          router.refresh();
           router.push("/karyawan");
         }, 1500);
       } else {
