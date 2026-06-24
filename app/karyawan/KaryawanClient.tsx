@@ -75,6 +75,7 @@ function SkeletonCard() {
 export default function KaryawanDashboardPage() {
   const router = useRouter();
   const [user, setUser] = useState<UserInfo | null>(null);
+  const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -83,6 +84,28 @@ export default function KaryawanDashboardPage() {
   const [modelsLoaded, setModelsLoaded] = useState(false);
   const [isScanning, setIsScanning] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
+
+  const fetchRecords = async () => {
+    try {
+      const attRes = await fetch("/api/attendance", { cache: "no-store" });
+      if (attRes.ok) {
+        const attData = await attRes.json();
+        const fetchedRecords: AttendanceRecord[] = attData.data || [];
+        setRecords(fetchedRecords);
+
+        const startOfDay = new Date();
+        startOfDay.setHours(0, 0, 0, 0);
+        const record = fetchedRecords.find(
+          (r) => new Date(r.date).getTime() === startOfDay.getTime()
+        );
+        if (record) {
+          setTodayRecord(record);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching records:", err);
+    }
+  };
 
   useEffect(() => {
     const loadModels = async () => {
@@ -103,39 +126,18 @@ export default function KaryawanDashboardPage() {
   useEffect(() => {
     async function fetchData() {
       try {
-        const [meRes, attRes] = await Promise.all([
-          fetch("/api/auth/me", { cache: "no-store" }),
-          fetch("/api/attendance", { cache: "no-store" }),
-        ]);
-
+        const meRes = await fetch("/api/auth/me", { cache: "no-store" });
         if (meRes.ok) {
           const meData = await meRes.json();
           setUser(meData.user);
         }
-
-        if (attRes.ok) {
-          const attData = await attRes.json();
-          const records: AttendanceRecord[] = attData.data || [];
-
-          const startOfDay = new Date();
-          startOfDay.setHours(0, 0, 0, 0);
-
-          // Find today's specific record
-          const record = records.find(
-            (r) => new Date(r.date).getTime() === startOfDay.getTime()
-          );
-
-          if (record) {
-            setTodayRecord(record);
-          }
-        }
+        await fetchRecords();
       } catch (err) {
         console.error("Error fetching dashboard data:", err);
       } finally {
         setLoading(false);
       }
     }
-
     fetchData();
   }, []);
 
@@ -164,6 +166,45 @@ export default function KaryawanDashboardPage() {
       };
       img.onerror = () => resolve(null);
     });
+  };
+
+  const handleDaftarWajah = async () => {
+    if (!modelsLoaded) {
+      setMessage({ text: "Model pengenalan wajah sedang dimuat, mohon tunggu...", type: "info" });
+      return;
+    }
+
+    setIsScanning(true);
+    setMessage({ text: "Sedang memindai wajah...", type: "info" });
+
+    const currentDescriptor = await detectFaceFromWebcam();
+    if (!currentDescriptor) {
+      setMessage({ text: "Wajah tidak terdeteksi di kamera. Pastikan pencahayaan cukup.", type: "error" });
+      setIsScanning(false);
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/auth/face", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ faceDescriptor: Array.from(currentDescriptor) }),
+      });
+
+      const data = await res.json();
+      if (res.ok || data.success) {
+        setUser((prev) =>
+          prev ? { ...prev, hasFaceRegistered: true, faceDescriptor: Array.from(currentDescriptor) } : null
+        );
+        setMessage({ text: "Wajah berhasil didaftarkan!", type: "success" });
+      } else {
+        setMessage({ text: data.error || "Gagal mendaftarkan wajah", type: "error" });
+      }
+    } catch (err) {
+      setMessage({ text: "Terjadi kesalahan server saat mendaftarkan wajah", type: "error" });
+    } finally {
+      setIsScanning(false);
+    }
   };
 
   const handleAbsen = async (type: 'masuk' | 'keluar') => {
@@ -229,7 +270,7 @@ export default function KaryawanDashboardPage() {
           const data = await res.json();
           if (data.success || res.ok) {
             setMessage({ text: `Absen ${type} berhasil dicatat!`, type: "success" });
-            setTimeout(() => window.location.reload(), 1500);
+            await fetchRecords();
           } else {
             setMessage({ text: data.error || `Gagal menyimpan absen ${type}`, type: "error" });
           }
@@ -266,9 +307,13 @@ export default function KaryawanDashboardPage() {
 
   const status = getStatus();
 
-  // Button States
-  const isMasukDisabled = !!todayRecord?.waktuMasuk;
-  const isPulangDisabled = !todayRecord?.waktuMasuk || !!todayRecord?.waktuKeluar;
+  // Calculate attendance states
+  const todayDateStr = new Date().toDateString();
+  const userRecords = records.filter(
+    (r) => user && r.employeeName === user.name && new Date(r.date).toDateString() === todayDateStr
+  );
+  const hasAbsenMasuk = userRecords.length > 0 && !!userRecords[0].waktuMasuk;
+  const hasAbsenKeluar = userRecords.length > 0 && !!userRecords[0].waktuKeluar;
 
   if (loading) {
     return (
@@ -396,41 +441,38 @@ export default function KaryawanDashboardPage() {
       </div>
 
       {/* Explicit CTA Buttons */}
-      <div className="grid grid-cols-2 gap-3">
-        {/* Button Masuk */}
-        {isMasukDisabled ? (
-          <div className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-gray-100 text-gray-400 text-sm font-bold border border-gray-200 cursor-not-allowed select-none">
+      <div className="flex flex-col gap-3">
+        {!user?.hasFaceRegistered ? (
+          <button
+            onClick={handleDaftarWajah}
+            disabled={isScanning || !modelsLoaded}
+            className="flex w-full items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white text-sm font-bold shadow-lg shadow-blue-500/25 hover:shadow-xl hover:shadow-blue-500/30 hover:from-blue-600 hover:to-indigo-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-70 disabled:cursor-not-allowed"
+          >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+              <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2" />
             </svg>
-            Masuk Selesai
+            Daftarkan Wajah
+          </button>
+        ) : hasAbsenMasuk && hasAbsenKeluar ? (
+          <div className="flex items-center justify-center py-4 rounded-2xl bg-emerald-50 text-emerald-700 text-sm font-bold border border-emerald-200 select-none">
+            Anda sudah menyelesaikan absensi hari ini.
           </div>
-        ) : (
+        ) : !hasAbsenMasuk ? (
           <button
             onClick={() => handleAbsen('masuk')}
             disabled={isScanning || !modelsLoaded}
-            className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-teal-500 to-cyan-600 text-white text-sm font-bold shadow-lg shadow-teal-500/25 hover:shadow-xl hover:shadow-teal-500/30 hover:from-teal-600 hover:to-cyan-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-70 disabled:cursor-not-allowed"
+            className="flex w-full items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-teal-500 to-cyan-600 text-white text-sm font-bold shadow-lg shadow-teal-500/25 hover:shadow-xl hover:shadow-teal-500/30 hover:from-teal-600 hover:to-cyan-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-70 disabled:cursor-not-allowed"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
             </svg>
             Absen Masuk
           </button>
-        )}
-
-        {/* Button Pulang */}
-        {isPulangDisabled ? (
-          <div className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-gray-100 text-gray-400 text-sm font-bold border border-gray-200 cursor-not-allowed select-none">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
-            </svg>
-            {todayRecord?.waktuKeluar ? "Pulang Selesai" : "Belum Masuk"}
-          </div>
         ) : (
           <button
             onClick={() => handleAbsen('keluar')}
             disabled={isScanning || !modelsLoaded}
-            className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-orange-500 to-red-500 text-white text-sm font-bold shadow-lg shadow-orange-500/25 hover:shadow-xl hover:shadow-orange-500/30 hover:from-orange-600 hover:to-red-600 active:scale-[0.98] transition-all duration-200 disabled:opacity-70 disabled:cursor-not-allowed"
+            className="flex w-full items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-orange-500 to-red-500 text-white text-sm font-bold shadow-lg shadow-orange-500/25 hover:shadow-xl hover:shadow-orange-500/30 hover:from-orange-600 hover:to-red-600 active:scale-[0.98] transition-all duration-200 disabled:opacity-70 disabled:cursor-not-allowed"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
