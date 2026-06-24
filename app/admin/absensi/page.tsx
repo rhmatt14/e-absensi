@@ -35,9 +35,11 @@ export default function AbsensiPage() {
 
         if (attData.success) {
           const rawRecords = attData.data;
-          
+          // Filter out malformed legacy test data where date is missing or invalid
+          const validRawRecords = rawRecords.filter((record: any) => record.date && !isNaN(new Date(record.date).getTime()));
+
           // Data is already one document per user per day in the new schema
-          const processedRecords = rawRecords.map((record: any) => ({
+          const processedRecords = validRawRecords.map((record: any) => ({
             date: new Date(record.date),
             employeeName: record.employeeName,
             checkIn: record.waktuMasuk ? new Date(record.waktuMasuk) : null,

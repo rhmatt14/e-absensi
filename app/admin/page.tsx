@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 
 export default function DashboardPage() {
+  const [adminName, setAdminName] = useState<string>("");
   const [stats, setStats] = useState({
     totalKaryawan: 0,
     hadir: 0,
@@ -15,12 +16,17 @@ export default function DashboardPage() {
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const [usersRes, attendanceRes] = await Promise.all([
+        const [usersRes, attendanceRes, meRes] = await Promise.all([
           fetch("/api/admin/users"),
           fetch("/api/attendance"),
+          fetch("/api/auth/me"),
         ]);
         const usersData = await usersRes.json();
         const attendanceData = await attendanceRes.json();
+        const meData = await meRes.json();
+        if (meData.authenticated && meData.user?.name) {
+          setAdminName(meData.user.name);
+        }
 
         const employees = usersData.success
           ? usersData.data.filter((u: any) => u.role === "employee")
@@ -147,7 +153,9 @@ export default function DashboardPage() {
   return (
     <div className="max-w-5xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+        <h1 className="text-2xl font-bold text-gray-900">
+          Halo, {adminName || "Admin"}! 👋
+        </h1>
         <p className="text-gray-500 mt-1">
           Ringkasan kondisi absensi hari ini.
         </p>
