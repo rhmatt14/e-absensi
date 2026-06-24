@@ -1,499 +1,244 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 
-export default function AdminDashboard() {
-  const router = useRouter();
-  const [users, setUsers] = useState<any[]>([]);
-  const [attendance, setAttendance] = useState<any[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState<{
-    text: string;
-    type: "success" | "error";
-  } | null>(null);
-  const [enableDailyLimit, setEnableDailyLimit] = useState(true);
-  const [settingsLoading, setSettingsLoading] = useState(false);
-
-  const [formData, setFormData] = useState({
-    username: "",
-    name: "",
-    password: "",
-    role: "employee",
+export default function DashboardPage() {
+  const [stats, setStats] = useState({
+    totalKaryawan: 0,
+    hadir: 0,
+    terlambat: 0,
+    absen: 0,
   });
-
-  const fetchUsers = async () => {
-    try {
-      const res = await fetch("/api/admin/users");
-      const data = await res.json();
-      if (data.success) {
-        setUsers(data.data);
-      }
-    } catch (error) {
-      console.error("Gagal mengambil data user", error);
-    }
-  };
-
-  const fetchAttendance = async () => {
-    try {
-      const res = await fetch("/api/attendance");
-      const data = await res.json();
-      if (data.success) {
-        setAttendance(data.data);
-      }
-    } catch (error) {
-      console.error("Gagal mengambil data absensi", error);
-    }
-  };
-
-  const fetchSettings = async () => {
-    try {
-      const res = await fetch("/api/settings");
-      const data = await res.json();
-      if (data.success) {
-        setEnableDailyLimit(data.data.enableDailyLimit);
-      }
-    } catch (error) {
-      console.error("Gagal mengambil pengaturan", error);
-    }
-  };
-
-  const toggleDailyLimit = async () => {
-    setSettingsLoading(true);
-    try {
-      const res = await fetch("/api/settings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enableDailyLimit: !enableDailyLimit }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setEnableDailyLimit(data.data.enableDailyLimit);
-      }
-    } catch (error) {
-      console.error("Gagal mengubah pengaturan", error);
-    } finally {
-      setSettingsLoading(false);
-    }
-  };
+  const [tableData, setTableData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetchUsers();
-    fetchSettings();
-    fetchAttendance();
+    const fetchStats = async () => {
+      try {
+        const [usersRes, attendanceRes] = await Promise.all([
+          fetch("/api/admin/users"),
+          fetch("/api/attendance"),
+        ]);
+        const usersData = await usersRes.json();
+        const attendanceData = await attendanceRes.json();
+
+        const employees = usersData.success
+          ? usersData.data.filter((u: any) => u.role === "employee")
+          : [];
+        const totalKaryawan = employees.length;
+
+        // Count today's attendance
+        const todayStr = new Date().toDateString();
+        const todayRecords = attendanceData.success
+          ? attendanceData.data.filter(
+              (a: any) => new Date(a.timestamp).toDateString() === todayStr
+            )
+          : [];
+
+        const todayMasuk = todayRecords.filter((a: any) => a.type === "masuk");
+
+        setStats({
+          totalKaryawan,
+          hadir: todayMasuk.length,
+          terlambat: 0, // Will be implemented with work hour settings
+          absen: Math.max(0, totalKaryawan - todayMasuk.length),
+        });
+
+        // Calculate table data
+        const processedData = employees.map((emp: any) => {
+          const empName = emp.name || emp.username;
+          const empRecords = todayRecords.filter((a: any) => a.employeeName === empName);
+          
+          const masukRecords = empRecords.filter((a: any) => a.type === "masuk").sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+          const keluarRecords = empRecords.filter((a: any) => a.type === "keluar").sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+          const checkIn = masukRecords.length > 0 ? new Date(masukRecords[0].timestamp) : null;
+          const checkOut = keluarRecords.length > 0 ? new Date(keluarRecords[0].timestamp) : null;
+
+          let statusText = "Tidak Hadir";
+          let statusColor = "bg-red-50 text-red-700 border-red-200";
+
+          if (checkIn && checkOut) {
+            const diffMs = checkOut.getTime() - checkIn.getTime();
+            const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+            const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+            statusText = `Total: ${diffHrs}j ${diffMins}m`;
+            statusColor = "bg-blue-50 text-blue-700 border-blue-200";
+          } else if (checkIn) {
+            statusText = "Hadir";
+            statusColor = "bg-green-50 text-green-700 border-green-200";
+            
+            // simple terlambat check (assuming > 08:00 is late)
+            const hour = checkIn.getHours();
+            const min = checkIn.getMinutes();
+            if (hour > 8 || (hour === 8 && min > 0)) {
+               statusText = "Terlambat";
+               statusColor = "bg-amber-50 text-amber-700 border-amber-200";
+            }
+          }
+
+          return {
+            name: empName,
+            checkIn: checkIn ? checkIn.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "-",
+            checkOut: checkOut ? checkOut.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : "-",
+            status: statusText,
+            statusColor: statusColor
+          };
+        });
+
+        setTableData(processedData);
+      } catch (error) {
+        console.error("Gagal mengambil data dashboard", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchStats();
   }, []);
 
-  const handleChange = (
-    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
-  ) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleCreateUser = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setMessage(null);
-
-    try {
-      const res = await fetch("/api/admin/users", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(formData),
-      });
-
-      const data = await res.json();
-      if (res.ok) {
-        setMessage({ text: "Akun berhasil dibuat!", type: "success" });
-        setFormData({ username: "", name: "", password: "", role: "employee" });
-        fetchUsers();
-      } else {
-        setMessage({ text: data.error || "Gagal membuat akun", type: "error" });
-      }
-    } catch (err) {
-      setMessage({ text: "Terjadi kesalahan sistem", type: "error" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleDeleteUser = async (id: string, name: string) => {
-    if (!confirm(`Apakah Anda yakin ingin menghapus akun ${name}?`)) return;
-
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/admin/users/${id}`, { method: "DELETE" });
-      const data = await res.json();
-      if (data.success) {
-        setMessage({ text: `Akun ${name} berhasil dihapus.`, type: "success" });
-        fetchUsers();
-      } else {
-        setMessage({
-          text: data.error || "Gagal menghapus akun",
-          type: "error",
-        });
-      }
-    } catch (error) {
-      setMessage({ text: "Terjadi kesalahan sistem", type: "error" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleClearAttendance = async (name: string) => {
-    if (
-      !confirm(
-        `Apakah Anda yakin ingin menghapus SEMUA riwayat absen untuk ${name}?`,
-      )
-    )
-      return;
-
-    setLoading(true);
-    try {
-      const res = await fetch(
-        `/api/admin/attendance/${encodeURIComponent(name)}`,
-        { method: "DELETE" },
-      );
-      const data = await res.json();
-      if (data.success) {
-        setMessage({
-          text: `Riwayat absen ${name} berhasil dihapus.`,
-          type: "success",
-        });
-      } else {
-        setMessage({
-          text: data.error || "Gagal menghapus riwayat absen",
-          type: "error",
-        });
-      }
-    } catch (error) {
-      setMessage({ text: "Terjadi kesalahan sistem", type: "error" });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleLogout = async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    router.push("/login");
-  };
-
-  // Fungsi untuk memproses data absensi menjadi total jam kerja
-  const getWorkHours = () => {
-    const workHoursRecords: any[] = [];
-
-    for (let i = 0; i < attendance.length; i++) {
-      const current = attendance[i];
-
-      if (current.type === "keluar") {
-        const waktuKeluar = new Date(current.timestamp);
-
-        const matchedMasuk = attendance.find((r, index) => {
-          const isMasuk = r.type === "masuk";
-          const isSameUser = r.employeeName === current.employeeName;
-          const isSameDay =
-            new Date(r.timestamp).toDateString() === waktuKeluar.toDateString();
-
-          return index > i && isMasuk && isSameUser && isSameDay;
-        });
-
-        if (matchedMasuk) {
-          const waktuMasuk = new Date(matchedMasuk.timestamp);
-          const selisihMs = waktuKeluar.getTime() - waktuMasuk.getTime(); // Hasil dalam milidetik
-
-          const totalJam = Math.floor(selisihMs / (1000 * 60 * 60));
-          const sisaMenit = Math.floor(
-            (selisihMs % (1000 * 60 * 60)) / (1000 * 60),
-          );
-
-          workHoursRecords.push({
-            id: current._id,
-            name: current.employeeName,
-            tanggal: waktuKeluar.toLocaleDateString("id-ID", {
-              weekday: "long",
-              year: "numeric",
-              month: "long",
-              day: "numeric",
-            }),
-            jamMasuk: waktuMasuk.toLocaleTimeString("id-ID", {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            jamKeluar: waktuKeluar.toLocaleTimeString("id-ID", {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-            durasi: `${totalJam} jam ${sisaMenit} menit`,
-          });
-        }
-      }
-    }
-
-    return workHoursRecords;
-  };
+  const statCards = [
+    {
+      label: "Total Karyawan",
+      value: stats.totalKaryawan,
+      color: "bg-blue-50 text-blue-700 border-blue-100",
+      iconColor: "text-blue-500",
+      icon: (
+        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+        </svg>
+      ),
+    },
+    {
+      label: "Hadir Hari Ini",
+      value: stats.hadir,
+      color: "bg-green-50 text-green-700 border-green-100",
+      iconColor: "text-green-500",
+      icon: (
+        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+    },
+    {
+      label: "Terlambat",
+      value: stats.terlambat,
+      color: "bg-amber-50 text-amber-700 border-amber-100",
+      iconColor: "text-amber-500",
+      icon: (
+        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+    },
+    {
+      label: "Tidak Hadir",
+      value: stats.absen,
+      color: "bg-red-50 text-red-700 border-red-100",
+      iconColor: "text-red-500",
+      icon: (
+        <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      ),
+    },
+  ];
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-8 font-sans text-gray-900">
-      <main className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row justify-between items-center gap-4 bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-800">
-              Dashboard Administrator
-            </h1>
-            <p className="text-gray-500">
-              Kelola akun karyawan dan sistem absensi
+    <div className="max-w-5xl mx-auto">
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
+        <p className="text-gray-500 mt-1">
+          Ringkasan kondisi absensi hari ini.
+        </p>
+      </div>
+
+      {/* Stat Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {statCards.map((card) => (
+          <div
+            key={card.label}
+            className={`rounded-2xl border p-5 ${card.color} transition-shadow hover:shadow-md`}
+          >
+            <div className="flex items-center justify-between mb-3">
+              <span className={card.iconColor}>{card.icon}</span>
+            </div>
+            <p className="text-3xl font-bold">
+              {loading ? (
+                <span className="inline-block w-10 h-8 rounded bg-current/10 animate-pulse" />
+              ) : (
+                card.value
+              )}
             </p>
+            <p className="text-sm font-medium mt-1 opacity-80">{card.label}</p>
           </div>
-          <div className="flex gap-3">
-            <button
-              onClick={() => router.push("/")}
-              className="px-4 py-2 bg-blue-50 text-blue-600 font-semibold rounded-xl hover:bg-blue-100 transition-colors"
-            >
-              Lihat Absensi
-            </button>
-            <button
-              onClick={handleLogout}
-              className="px-4 py-2 bg-red-50 text-red-600 font-semibold rounded-xl hover:bg-red-100 transition-colors"
-            >
-              Keluar
-            </button>
-          </div>
-        </div>
+        ))}
+      </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="space-y-6">
-            {/* Form Buat User */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 h-fit">
-              <h2 className="text-lg font-bold mb-4 text-gray-800">
-                Buat Akun Baru
-              </h2>
-
-              <form onSubmit={handleCreateUser} className="space-y-4">
-                <div>
-                  <label className="block text-sm font-semibold mb-1 text-gray-700">
-                    Username Login
-                  </label>
-                  <input
-                    type="text"
-                    name="username"
-                    value={formData.username}
-                    onChange={handleChange}
-                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold mb-1 text-gray-700">
-                    Nama Lengkap
-                  </label>
-                  <input
-                    type="text"
-                    name="name"
-                    value={formData.name}
-                    onChange={handleChange}
-                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold mb-1 text-gray-700">
-                    Password
-                  </label>
-                  <input
-                    type="password"
-                    name="password"
-                    value={formData.password}
-                    onChange={handleChange}
-                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-semibold mb-1 text-gray-700">
-                    Role
-                  </label>
-                  <select
-                    name="role"
-                    value={formData.role}
-                    onChange={handleChange}
-                    className="w-full px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                  >
-                    <option value="employee">Karyawan (Hanya Absen)</option>
-                    <option value="admin">Admin (Akses Penuh)</option>
-                  </select>
-                </div>
-
-                {message && (
-                  <div
-                    className={`p-3 rounded-lg text-sm font-medium ${message.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700"}`}
-                  >
-                    {message.text}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full bg-gray-900 hover:bg-black text-white font-bold py-2.5 rounded-lg transition-colors disabled:opacity-50 mt-2"
-                >
-                  {loading ? "Menyimpan..." : "Buat Akun"}
-                </button>
-              </form>
-            </div>
-
-            {/* Pengaturan Sistem */}
-            <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 h-fit">
-              <h2 className="text-lg font-bold mb-4 text-gray-800">
-                Pengaturan Sistem
-              </h2>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-semibold text-gray-800 text-sm">
-                    Batasi Absen Harian
-                  </p>
-                  <p className="text-xs text-gray-500 mt-1">
-                    Mencegah user absen berulang kali di hari yang sama.
-                  </p>
-                </div>
-                <button
-                  onClick={toggleDailyLimit}
-                  disabled={settingsLoading}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 ${enableDailyLimit ? "bg-blue-600" : "bg-gray-200"} disabled:opacity-50`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${enableDailyLimit ? "translate-x-6" : "translate-x-1"}`}
-                  />
-                </button>
-              </div>
-            </div>
-          </div>
-
-          {/* Daftar User */}
-          <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-            <h2 className="text-lg font-bold mb-4 text-gray-800">
-              Daftar Pengguna Sistem
-            </h2>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-gray-200 text-gray-500 text-sm">
-                    <th className="py-3 px-2 font-medium">Nama / Username</th>
-                    <th className="py-3 px-2 font-medium">Role</th>
-                    <th className="py-3 px-2 font-medium">Tanggal Dibuat</th>
-                    <th className="py-3 px-2 font-medium text-right">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody className="text-sm">
-                  {users.length === 0 ? (
-                    <tr>
-                      <td
-                        colSpan={4}
-                        className="py-8 text-center text-gray-500"
-                      >
-                        Memuat data...
-                      </td>
-                    </tr>
-                  ) : (
-                    users.map((u) => (
-                      <tr
-                        key={u._id}
-                        className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
-                      >
-                        <td className="py-3 px-2">
-                          <p className="font-semibold text-gray-800">
-                            {u.name}
-                          </p>
-                          <p className="text-xs text-gray-500">@{u.username}</p>
-                        </td>
-                        <td className="py-3 px-2">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${u.role === "admin" ? "bg-purple-100 text-purple-700" : "bg-blue-100 text-blue-700"}`}
-                          >
-                            {u.role === "admin" ? "Admin" : "Karyawan"}
-                          </span>
-                        </td>
-                        <td className="py-3 px-2 text-gray-500">
-                          {u.createdAt
-                            ? new Date(u.createdAt).toLocaleDateString("id-ID")
-                            : "-"}
-                        </td>
-                        <td className="py-3 px-2 text-right space-x-2">
-                          <button
-                            onClick={() => handleClearAttendance(u.name)}
-                            className="text-orange-600 bg-orange-50 px-2 py-1 rounded text-xs font-semibold hover:bg-orange-100 transition-colors"
-                          >
-                            Hapus Absen
-                          </button>
-                          <button
-                            onClick={() => handleDeleteUser(u._id, u.name)}
-                            className="text-red-600 bg-red-50 px-2 py-1 rounded text-xs font-semibold hover:bg-red-100 transition-colors"
-                          >
-                            Hapus Akun
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-        {/* Kotak Tabel Rekap Jam Kerja Karyawan */}
-        <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 mt-6">
-          <h2 className="text-lg font-bold mb-4 text-gray-800">
-            Rekap Total Jam Kerja Karyawan
+      {/* Table Absensi Hari Ini */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="p-6 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-800">
+            Absensi Hari Ini
           </h2>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-gray-200 text-gray-500 text-sm">
-                  <th className="py-3 px-2 font-medium">Nama Karyawan</th>
-                  <th className="py-3 px-2 font-medium">Tanggal</th>
-                  <th className="py-3 px-2 font-medium">Jam Masuk</th>
-                  <th className="py-3 px-2 font-medium">Jam Keluar</th>
-                  <th className="py-3 px-2 font-medium">Total Jam Kerja</th>
+          <p className="text-sm text-gray-500 mt-1">
+            Data kehadiran karyawan pada hari ini.
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm text-left text-gray-500">
+            <thead className="text-xs text-gray-700 uppercase bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th scope="col" className="px-6 py-4 font-medium">
+                  Nama Karyawan
+                </th>
+                <th scope="col" className="px-6 py-4 font-medium">
+                  Waktu Check In
+                </th>
+                <th scope="col" className="px-6 py-4 font-medium">
+                  Waktu Check Out
+                </th>
+                <th scope="col" className="px-6 py-4 font-medium">
+                  Status
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {loading ? (
+                <tr>
+                  <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
+                    <div className="flex justify-center items-center">
+                      <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                      <span className="ml-2">Memuat data...</span>
+                    </div>
+                  </td>
                 </tr>
-              </thead>
-              <tbody className="text-sm">
-                {getWorkHours().length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="py-8 text-center text-gray-500">
-                      Belum ada data rekap jam kerja harian.
+              ) : tableData.length > 0 ? (
+                tableData.map((row, index) => (
+                  <tr key={index} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
+                      {row.name}
+                    </td>
+                    <td className="px-6 py-4">{row.checkIn}</td>
+                    <td className="px-6 py-4">{row.checkOut}</td>
+                    <td className="px-6 py-4">
+                      <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${row.statusColor}`}>
+                        {row.status}
+                      </span>
                     </td>
                   </tr>
-                ) : (
-                  getWorkHours().map((rec) => (
-                    <tr
-                      key={rec.id}
-                      className="border-b border-gray-100 hover:bg-gray-50 transition-colors"
-                    >
-                      <td className="py-3 px-2 font-semibold text-gray-800">
-                        {rec.name}
-                      </td>
-                      <td className="py-3 px-2 text-gray-600">{rec.tanggal}</td>
-                      <td className="py-3 px-2 text-green-600 font-medium">
-                        {rec.jamMasuk}
-                      </td>
-                      <td className="py-3 px-2 text-red-600 font-medium">
-                        {rec.jamKeluar}
-                      </td>
-                      <td className="py-3 px-2 font-bold text-blue-600">
-                        {rec.durasi}
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={4} className="px-6 py-8 text-center text-gray-500">
+                    Belum ada data kehadiran hari ini.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-      </main>
+      </div>
     </div>
   );
 }
