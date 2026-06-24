@@ -32,10 +32,10 @@ export async function POST(req: Request) {
     }
 
     const newIzin = await Izin.create({
-      employeeName,
-      jenisIzin,
-      tanggal: new Date(tanggal),
-      alasan,
+      employeeName: String(employeeName),
+      jenisIzin: String(jenisIzin) as 'Sakit' | 'Izin' | 'Cuti',
+      tanggal: new Date(String(tanggal)),
+      alasan: String(alasan),
     });
 
     return NextResponse.json({ success: true, data: newIzin }, { status: 201 });
