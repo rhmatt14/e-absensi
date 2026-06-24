@@ -33,53 +33,63 @@ export default function DashboardPage() {
           : [];
         const totalKaryawan = employees.length;
 
-        // Count today's attendance
-        const todayStr = new Date().toDateString();
-        const todayRecords = attendanceData.success
-          ? attendanceData.data.filter(
-              (a: any) => new Date(a.timestamp).toDateString() === todayStr
-            )
-          : [];
+        // 1. Get "Today" boundary in local time
+        const now = new Date();
+        const todayStr = now.toLocaleDateString("en-CA"); // YYYY-MM-DD in local time
 
-        const todayMasuk = todayRecords.filter((a: any) => a.type === "masuk");
-
-        setStats({
-          totalKaryawan,
-          hadir: todayMasuk.length,
-          terlambat: 0, // Will be implemented with work hour settings
-          absen: Math.max(0, totalKaryawan - todayMasuk.length),
+        // 2. Filter records for today (using new schema fields)
+        const rawRecords = attendanceData.success ? attendanceData.data : [];
+        const validRawRecords = rawRecords.filter((r: any) => r.date && !isNaN(new Date(r.date).getTime()));
+        
+        const todayRecords = validRawRecords.filter((a: any) => {
+          const recordDateStr = new Date(a.date).toLocaleDateString("en-CA");
+          return recordDateStr === todayStr;
         });
 
-        // Calculate table data
+        let countHadir = 0;
+        let countTerlambat = 0;
+
+        // 3. Calculate Table Data per Employee & Accumulate Stats
         const processedData = employees.map((emp: any) => {
           const empName = emp.name || emp.username;
-          const empRecords = todayRecords.filter((a: any) => a.employeeName === empName);
+          // Find if this employee checked in today
+          const record = todayRecords.find((a: any) => a.employeeName === empName);
           
-          const masukRecords = empRecords.filter((a: any) => a.type === "masuk").sort((a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-          const keluarRecords = empRecords.filter((a: any) => a.type === "keluar").sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-
-          const checkIn = masukRecords.length > 0 ? new Date(masukRecords[0].timestamp) : null;
-          const checkOut = keluarRecords.length > 0 ? new Date(keluarRecords[0].timestamp) : null;
+          const checkIn = record?.waktuMasuk ? new Date(record.waktuMasuk) : null;
+          const checkOut = record?.waktuKeluar ? new Date(record.waktuKeluar) : null;
 
           let statusText = "Tidak Hadir";
           let statusColor = "bg-red-50 text-red-700 border-red-200";
+          let isLate = false;
+
+          // Determine if late (assuming > 08:00 is late in local time)
+          if (checkIn) {
+            const hour = checkIn.getHours();
+            const min = checkIn.getMinutes();
+            if (hour > 8 || (hour === 8 && min > 0)) {
+               isLate = true;
+            }
+          }
 
           if (checkIn && checkOut) {
             const diffMs = checkOut.getTime() - checkIn.getTime();
             const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
             const diffMins = Math.floor((diffMs % (1000 * 60 * 60)) / (1000 * 60));
-            statusText = `Total: ${diffHrs}j ${diffMins}m`;
+            statusText = `Selesai (${diffHrs}j ${diffMins}m)`;
             statusColor = "bg-blue-50 text-blue-700 border-blue-200";
           } else if (checkIn) {
-            statusText = "Hadir";
-            statusColor = "bg-green-50 text-green-700 border-green-200";
-            
-            // simple terlambat check (assuming > 08:00 is late)
-            const hour = checkIn.getHours();
-            const min = checkIn.getMinutes();
-            if (hour > 8 || (hour === 8 && min > 0)) {
-               statusText = "Terlambat";
-               statusColor = "bg-amber-50 text-amber-700 border-amber-200";
+            statusText = isLate ? "Terlambat" : "Hadir";
+            statusColor = isLate 
+              ? "bg-amber-50 text-amber-700 border-amber-200" 
+              : "bg-green-50 text-green-700 border-green-200";
+          }
+
+          // Update Stats accumulators based on pure check-in data (independent of early check-out UI state)
+          if (checkIn) {
+            if (isLate) {
+              countTerlambat++;
+            } else {
+              countHadir++;
             }
           }
 
@@ -90,6 +100,14 @@ export default function DashboardPage() {
             status: statusText,
             statusColor: statusColor
           };
+        });
+
+        // 4. Set accurate stats exactly matching table logic
+        setStats({
+          totalKaryawan,
+          hadir: countHadir + countTerlambat, // 'Hadir' now includes everyone who checked in
+          terlambat: countTerlambat,          // 'Terlambat' is a sub-metric of 'Hadir'
+          absen: Math.max(0, totalKaryawan - (countHadir + countTerlambat)),
         });
 
         setTableData(processedData);

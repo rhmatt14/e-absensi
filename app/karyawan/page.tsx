@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import Webcam from "react-webcam";
+import * as faceapi from '@vladmandic/face-api';
 
 interface UserInfo {
   name: string;
   username: string;
   role: string;
+  hasFaceRegistered?: boolean;
+  faceDescriptor?: number[];
 }
 
 interface AttendanceRecord {
@@ -74,6 +78,28 @@ export default function KaryawanDashboardPage() {
   const [todayRecord, setTodayRecord] = useState<AttendanceRecord | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Face Recognition States
+  const webcamRef = useRef<Webcam>(null);
+  const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const [message, setMessage] = useState<{ text: string; type: "success" | "error" | "info" } | null>(null);
+
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri('/models'),
+          faceapi.nets.faceLandmark68Net.loadFromUri('/models'),
+          faceapi.nets.faceRecognitionNet.loadFromUri('/models'),
+        ]);
+        setModelsLoaded(true);
+      } catch (err) {
+        console.error("Gagal memuat model face-api", err);
+      }
+    };
+    loadModels();
+  }, []);
+
   useEffect(() => {
     async function fetchData() {
       try {
@@ -112,6 +138,115 @@ export default function KaryawanDashboardPage() {
 
     fetchData();
   }, []);
+
+  const detectFaceFromWebcam = async (): Promise<Float32Array | null> => {
+    const photoSrc = webcamRef.current?.getScreenshot();
+    if (!photoSrc) return null;
+
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = photoSrc;
+      img.onload = async () => {
+        try {
+          const detection = await faceapi.detectSingleFace(img, new faceapi.TinyFaceDetectorOptions())
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+          
+          if (detection) {
+            resolve(detection.descriptor);
+          } else {
+            resolve(null);
+          }
+        } catch (e) {
+          console.error("Face detection error:", e);
+          resolve(null);
+        }
+      };
+      img.onerror = () => resolve(null);
+    });
+  };
+
+  const handleAbsen = async (type: 'masuk' | 'keluar') => {
+    if (!modelsLoaded) {
+      setMessage({ text: "Model pengenalan wajah sedang dimuat, mohon tunggu...", type: "info" });
+      return;
+    }
+
+    setIsScanning(true);
+    setMessage({ text: "Sedang memverifikasi wajah...", type: "info" });
+
+    if (!user?.hasFaceRegistered || !user?.faceDescriptor || user.faceDescriptor.length === 0) {
+      setMessage({ text: "Wajah Anda belum terdaftar. Silakan hubungi Admin.", type: "error" });
+      setIsScanning(false);
+      return;
+    }
+
+    const currentDescriptor = await detectFaceFromWebcam();
+    if (!currentDescriptor) {
+      setMessage({ text: "Wajah tidak terdeteksi di kamera. Pastikan pencahayaan cukup.", type: "error" });
+      setIsScanning(false);
+      return;
+    }
+
+    const savedDescriptor = new Float32Array(user.faceDescriptor);
+    const distance = faceapi.euclideanDistance(currentDescriptor, savedDescriptor);
+
+    if (distance > 0.55) {
+      setMessage({ text: "Wajah tidak cocok, dilarang titip absen!", type: "error" });
+      setIsScanning(false);
+      return;
+    }
+
+    setMessage({ text: "Wajah terverifikasi. Sedang mendapatkan lokasi...", type: "info" });
+
+    if (!navigator.geolocation) {
+      setMessage({ text: "Geolocation tidak didukung oleh browser Anda.", type: "error" });
+      setIsScanning(false);
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const coords = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        };
+
+        const photoSrc = webcamRef.current?.getScreenshot();
+
+        try {
+          const res = await fetch("/api/attendance", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              photo: photoSrc,
+              latitude: coords.latitude,
+              longitude: coords.longitude,
+              type,
+            }),
+          });
+
+          const data = await res.json();
+          if (data.success || res.ok) {
+            setMessage({ text: `Absen ${type} berhasil dicatat!`, type: "success" });
+            setTimeout(() => window.location.reload(), 1500);
+          } else {
+            setMessage({ text: data.error || `Gagal menyimpan absen ${type}`, type: "error" });
+          }
+        } catch (err) {
+          setMessage({ text: "Terjadi kesalahan sistem saat menghubungi server", type: "error" });
+        } finally {
+          setIsScanning(false);
+        }
+      },
+      (err) => {
+        console.error(err);
+        setMessage({ text: "Gagal mendapatkan lokasi. Pastikan Anda mengizinkan akses lokasi pada browser.", type: "error" });
+        setIsScanning(false);
+      },
+      { enableHighAccuracy: true }
+    );
+  };
 
   const getStatus = () => {
     if (!todayRecord || !todayRecord.waktuMasuk) {
@@ -217,6 +352,49 @@ export default function KaryawanDashboardPage() {
         </div>
       </div>
 
+      {/* Verifikasi Wajah / Camera Card */}
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-semibold text-gray-800">Kamera Kehadiran</h2>
+          {!modelsLoaded && (
+            <span className="text-xs font-medium text-teal-600 animate-pulse bg-teal-50 px-2 py-1 rounded-md">
+              Memuat AI...
+            </span>
+          )}
+          {modelsLoaded && isScanning && (
+            <span className="text-xs font-medium text-amber-600 animate-pulse bg-amber-50 px-2 py-1 rounded-md">
+              Memindai Wajah...
+            </span>
+          )}
+        </div>
+
+        <div className="rounded-xl overflow-hidden bg-gray-900 aspect-video relative flex items-center justify-center border border-gray-200">
+          <Webcam
+            audio={false}
+            ref={webcamRef}
+            screenshotFormat="image/jpeg"
+            className={`w-full h-full object-cover ${!modelsLoaded ? "opacity-0" : "opacity-100"} transition-opacity duration-500`}
+            videoConstraints={{ facingMode: "user" }}
+          />
+          {!modelsLoaded && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center text-white/70">
+              <div className="w-8 h-8 border-3 border-white/20 border-t-white rounded-full animate-spin mb-2" />
+              <p className="text-xs font-medium">Menyiapkan Kamera...</p>
+            </div>
+          )}
+        </div>
+
+        {message && (
+          <div className={`p-3 rounded-xl text-sm font-medium ${
+            message.type === 'success' ? 'bg-emerald-50 text-emerald-700' :
+            message.type === 'error' ? 'bg-red-50 text-red-700' :
+            'bg-blue-50 text-blue-700'
+          }`}>
+            {message.text}
+          </div>
+        )}
+      </div>
+
       {/* Explicit CTA Buttons */}
       <div className="grid grid-cols-2 gap-3">
         {/* Button Masuk */}
@@ -228,15 +406,16 @@ export default function KaryawanDashboardPage() {
             Masuk Selesai
           </div>
         ) : (
-          <Link
-            href="/karyawan/absensi?type=masuk"
-            className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-teal-500 to-cyan-600 text-white text-sm font-bold shadow-lg shadow-teal-500/25 hover:shadow-xl hover:shadow-teal-500/30 hover:from-teal-600 hover:to-cyan-700 active:scale-[0.98] transition-all duration-200"
+          <button
+            onClick={() => handleAbsen('masuk')}
+            disabled={isScanning || !modelsLoaded}
+            className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-teal-500 to-cyan-600 text-white text-sm font-bold shadow-lg shadow-teal-500/25 hover:shadow-xl hover:shadow-teal-500/30 hover:from-teal-600 hover:to-cyan-700 active:scale-[0.98] transition-all duration-200 disabled:opacity-70 disabled:cursor-not-allowed"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M11 16l-4-4m0 0l4-4m-4 4h14m-5 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h7a3 3 0 013 3v1" />
             </svg>
             Absen Masuk
-          </Link>
+          </button>
         )}
 
         {/* Button Pulang */}
@@ -248,15 +427,16 @@ export default function KaryawanDashboardPage() {
             {todayRecord?.waktuKeluar ? "Pulang Selesai" : "Belum Masuk"}
           </div>
         ) : (
-          <Link
-            href="/karyawan/absensi?type=pulang"
-            className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-orange-500 to-red-500 text-white text-sm font-bold shadow-lg shadow-orange-500/25 hover:shadow-xl hover:shadow-orange-500/30 hover:from-orange-600 hover:to-red-600 active:scale-[0.98] transition-all duration-200"
+          <button
+            onClick={() => handleAbsen('keluar')}
+            disabled={isScanning || !modelsLoaded}
+            className="flex items-center justify-center gap-2 py-4 rounded-2xl bg-gradient-to-r from-orange-500 to-red-500 text-white text-sm font-bold shadow-lg shadow-orange-500/25 hover:shadow-xl hover:shadow-orange-500/30 hover:from-orange-600 hover:to-red-600 active:scale-[0.98] transition-all duration-200 disabled:opacity-70 disabled:cursor-not-allowed"
           >
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
             </svg>
             Absen Pulang
-          </Link>
+          </button>
         )}
       </div>
 

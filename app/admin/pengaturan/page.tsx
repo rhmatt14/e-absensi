@@ -58,6 +58,27 @@ export default function PengaturanPage() {
     }
   };
 
+  const handleResetData = async () => {
+    const isConfirmed = window.confirm("PERINGATAN Keras: Apakah Anda yakin ingin menghapus SEMUA data absensi? Tindakan ini tidak dapat dibatalkan.");
+    if (!isConfirmed) return;
+
+    try {
+      const res = await fetch("/api/admin/absensi/reset", {
+        method: "DELETE",
+      });
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        alert("Semua data absensi berhasil dihapus!");
+        window.location.reload();
+      } else {
+        alert(data.error || "Gagal menghapus data absensi.");
+      }
+    } catch (error) {
+      alert("Terjadi kesalahan server saat mencoba menghapus data.");
+    }
+  };
+
   if (loading) {
     return (
       <div className="max-w-2xl mx-auto flex justify-center py-20">
@@ -155,6 +176,34 @@ export default function PengaturanPage() {
             </button>
           </div>
         </form>
+      </div>
+
+      {/* DANGER ZONE */}
+      <div className="mt-8 bg-red-50 rounded-2xl border border-red-200 p-8">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-10 h-10 rounded-xl bg-red-100 text-red-600 flex items-center justify-center shrink-0">
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          </div>
+          <div>
+            <h2 className="text-lg font-bold text-red-800">Zona Bahaya</h2>
+          </div>
+        </div>
+        
+        <p className="text-sm text-red-800 mb-6 font-medium">
+          Hapus seluruh data riwayat absensi karyawan dari database secara permanen.
+        </p>
+
+        <button
+          onClick={handleResetData}
+          className="w-full sm:w-auto px-6 py-2.5 bg-red-600 text-white font-medium rounded-xl hover:bg-red-700 focus:ring-4 focus:ring-red-500/20 transition-all flex items-center justify-center shadow-sm"
+        >
+          <svg className="w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+          Hapus Semua Data Absensi
+        </button>
       </div>
     </div>
   );

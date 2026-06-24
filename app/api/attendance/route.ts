@@ -25,33 +25,49 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Data tidak lengkap. Pastikan nama, foto, dan lokasi telah diisi.' }, { status: 400 });
     }
 
-    const startOfDay = new Date();
+    // Get current date in Asia/Jakarta timezone
+    const nowStr = new Date().toLocaleString("en-US", { timeZone: "Asia/Jakarta" });
+    const nowJakarta = new Date(nowStr);
+    
+    // Start and End of today in Jakarta time
+    const startOfDay = new Date(nowJakarta);
     startOfDay.setHours(0, 0, 0, 0);
+    
+    const endOfDay = new Date(nowJakarta);
+    endOfDay.setHours(23, 59, 59, 999);
 
-    // Cari record untuk hari ini
+    // Cari record untuk hari ini menggunakan rentang waktu
     let todayRecord = await Attendance.findOne({
       employeeName,
-      date: startOfDay
+      date: {
+        $gte: startOfDay,
+        $lte: endOfDay
+      }
     });
-
-    let setting = await Setting.findOne({ key: 'enableDailyLimit' });
-    const enableDailyLimit = setting ? setting.value : true;
 
     // Normalisasi type (pulang dan keluar dianggap sama)
     const normalizedType = type === 'pulang' ? 'keluar' : type;
 
-    if (enableDailyLimit) {
-      if (normalizedType === 'masuk') {
-        if (todayRecord && todayRecord.waktuMasuk) {
-          return NextResponse.json({ error: 'Anda sudah melakukan Absen Masuk hari ini. Silakan Absen Pulang.' }, { status: 400 });
-        }
-      } else if (normalizedType === 'keluar') {
-        if (!todayRecord || !todayRecord.waktuMasuk) {
-          return NextResponse.json({ error: 'Anda belum Absen Masuk hari ini.' }, { status: 400 });
-        }
-        if (todayRecord.waktuKeluar) {
-          return NextResponse.json({ error: 'Anda sudah Absen Pulang hari ini.' }, { status: 400 });
-        }
+    // Strict Duplicate Check
+    if (normalizedType === 'masuk') {
+      if (todayRecord) {
+        return NextResponse.json(
+          { error: 'Anda sudah melakukan absen masuk hari ini!' },
+          { status: 400 }
+        );
+      }
+    } else if (normalizedType === 'keluar') {
+      if (!todayRecord) {
+        return NextResponse.json(
+          { error: 'Anda belum Absen Masuk hari ini.' },
+          { status: 400 }
+        );
+      }
+      if (todayRecord.waktuKeluar) {
+        return NextResponse.json(
+          { error: 'Anda sudah Absen Pulang hari ini.' },
+          { status: 400 }
+        );
       }
     }
 
